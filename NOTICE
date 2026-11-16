@@ -1,0 +1,15 @@
+Java 扫描与 Spring 注解解析组件 src/java.rs、src/model.rs、src/spring.rs
+来源：https://github.com/YUYUY9527/spring-api-export/tree/v0.1.2
+Copyright (c) 2026 YUYUY9527，MIT（见 LICENSE.spring-api-export）。
+本项目对声明保留、字段过滤和解析边界进行了修改；不使用其约定响应包装推断。
+
+vendor/openidea-plugin 来自官方 OpenIDEA v0.1.45 的 sdk/rust/openidea-plugin
+和 wit，保留其 LICENSE。没有修改 SDK；API 版本要求为 ^1.8。
+
+EasyYapi 仅作为工作流程参考，本项目未复制其代码。
+
+Java 依赖元数据读取器使用 ASM 9.7.1（asm、asm-util），BSD-3-Clause。
+官方来源：https://asm.ow2.io/；许可证：LICENSE 的 ASM 章节；源码副本位于 vendor/asm/LICENSE。
+Maven Central 坐标 org.ow2.asm:asm:9.7.1、org.ow2.asm:asm-util:9.7.1；
+原始 JAR 位于 vendor/asm，未修改；helper 仅合并运行所需 class。
+resources/java-types.jar 内含 META-INF/ASM-LICENSE。

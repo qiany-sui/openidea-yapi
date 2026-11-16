@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>Java YApi Sync</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:16px;color:var(--openidea-fg);font:var(--openidea-font-size)/1.6 var(--openidea-font-ui)}h1{font-size:18px;margin:0 0 4px}p{margin:4px 0 14px;color:var(--openidea-fg-muted)}label{display:block;margin:10px 0 4px}input[type=url],input[type=password],input[type=text]{width:100%;padding:8px;border:1px solid var(--openidea-border);background:var(--openidea-bg-input);color:var(--openidea-fg);border-radius:4px}button{border:1px solid var(--openidea-border);padding:7px 12px;border-radius:4px;cursor:pointer;color:var(--openidea-fg);background:var(--openidea-bg-elevated)}button.primary{background:var(--openidea-accent);color:var(--openidea-fg-on-accent)}button:disabled{opacity:.5;cursor:default}button:focus-visible,input:focus-visible{outline:2px solid var(--openidea-focus-ring)}.buttons{display:flex;gap:8px;margin:14px 0;flex-wrap:wrap}#status{white-space:pre-wrap;padding:10px;border:1px solid var(--openidea-border);border-radius:4px}#files{overflow-wrap:anywhere}.row{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--openidea-border)}.row label{margin:0;flex:1}small{display:block;color:var(--openidea-fg-muted)}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--openidea-bg-input);padding:10px;font-family:var(--openidea-font-mono)}details{margin:8px 0}#preview{margin-top:18px}.target{font-weight:600}
+</style>
+<h1>Java YApi Sync</h1><p>从选中的 Java Spring MVC Controller 生成接口文档，预览后同步。</p>
+<div id="files"></div>
+<label for="base">YApi 服务地址</label><input id="base" type="url" placeholder="http://yapi.intranet:3000" autocomplete="off">
+<label for="token">项目 token</label><input id="token" type="password" placeholder="在 YApi 项目 → 设置 → token 中获取" autocomplete="off">
+<small>token 仅用于当前插件会话，不保存到磁盘。重启或会话失效后需重新输入。</small>
+<details><summary>Maven 依赖解析设置（可选）</summary>
+<small>外部类型需授权 Java 17+ 和 Maven。默认使用 Maven 的本机设置与已下载依赖；Gradle 暂不支持。</small>
+<label for="settings">Maven settings.xml 路径</label><input id="settings" type="text" placeholder="留空使用 Maven 默认设置" autocomplete="off">
+<label for="repository">Maven 本地仓库路径</label><input id="repository" type="text" placeholder="留空从 Maven 设置读取" autocomplete="off">
+</details>
+<div class="buttons"><button id="load" class="primary">生成同步预览</button><button id="forget">清除会话 token</button></div>
+<div id="status" role="status" aria-live="polite">正在读取项目…</div>
+<section id="preview" hidden><div id="target" class="target"></div><div id="items"></div>
+<div class="buttons"><button id="sync" class="primary">同步选中接口…</button><button id="cancel">取消预览</button></div>
+<small>更新保留原分类、状态与手工备注；新增接口按 Controller 分类。不会删除接口。</small></section>
+<script>
+const $=id=>document.getElementById(id);
+let state={},busy=false;
+function invalidate(){$('preview').hidden=true;state.plan=null;}
+function send(data){if(busy)return;busy=true;for(const id of ['load','forget','sync'])$(id).disabled=true;$('status').textContent='正在处理…';openidea.postMessage(JSON.stringify(data));}
+function render(raw){
+ busy=false;for(const id of ['load','forget','sync'])$(id).disabled=false;
+ try{state=JSON.parse(raw);}catch{return;}
+ $('base').value=state.base||'';
+ $('settings').value=state.maven?.settings||'';
+ $('repository').value=state.maven?.repository||'';
+ $('token').placeholder=state.hasToken?'已提供 token；留空继续使用，输入新值可替换':'输入 YApi 项目 token';
+ $('files').textContent=(state.selected||[]).join('\n')||'请先在 Controller 文件上执行「YApi：预览并同步」';
+ $('status').textContent=state.status||'等待选择 Controller';
+ $('preview').hidden=!state.plan;$('items').replaceChildren();
+ if(!state.plan)return;
+ $('target').textContent=state.base+' → '+state.plan.project_name+'（'+state.plan.project_id+'）';
+ state.plan.items.forEach((item,i)=>{
+  const row=document.createElement('div');row.className='row';
+  const check=document.createElement('input');check.type='checkbox';check.checked=item.action!=='未变化';check.dataset.index=i;check.id='item-'+i;
+  const content=document.createElement('label');content.htmlFor=check.id;content.textContent=item.action+' · '+item.method+' '+item.path;
+  const small=document.createElement('small');small.textContent=item.title+' · '+(item.before?'保留远端分类':'分类：'+item.category);content.append(small);
+  row.append(check,content);$('items').append(row);
+  const detail=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');
+  summary.textContent='查看将同步的字段';pre.textContent=JSON.stringify(item.payload,null,2);detail.append(summary,pre);$('items').append(detail);
+ });
+}
+openidea.onMessage(render);
+$('load').onclick=()=>{const token=$('token').value;$('token').value='';send({action:'preview',base:$('base').value,token,maven:{settings:$('settings').value.trim(),repository:$('repository').value.trim()}});};
+$('sync').onclick=()=>send({action:'sync',nonce:state.nonce,selected:[...document.querySelectorAll('[data-index]:checked')].map(e=>Number(e.dataset.index))});
+$('forget').onclick=()=>{$('token').value='';send({action:'forget'});};
+$('cancel').onclick=()=>{invalidate();$('status').textContent='已取消，没有写入。';};
+for(const id of ['base','token','settings','repository'])$(id).addEventListener('input',invalidate);
+send({action:'ready'});
+</script></html>

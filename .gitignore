@@ -1,0 +1,7 @@
+/target/
+/dist/
+/.scratch/
+/resources/java-types.jar
+__pycache__/
+.DS_Store
+*.key

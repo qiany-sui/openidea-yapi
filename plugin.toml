@@ -1,0 +1,39 @@
+id = "nc.yapi"
+name = "Java YApi Sync"
+version = "0.2.0"
+description = "从 Java Spring MVC Controller 同步接口到 YApi，支持 Maven 依赖类型与内网 HTTP。"
+authors = ["Nc"]
+license = "MIT"
+categories = ["frameworks", "tools"]
+icon = "icon.svg"
+engines.openidea = "^1.8"
+wasm = "dist/plugin.wasm"
+activation = ["on-command:preview", "on-view:sync"]
+
+[capabilities]
+required = ["project.read", "editor.read", "storage", "process:curl"]
+optional = ["process:mvn", "process:java"]
+
+[[contributes.commands]]
+id = "preview"
+title = "YApi：预览并同步 Controller"
+category = "YApi"
+
+[[contributes.menus]]
+menu = "editor.context"
+command = "preview"
+when = "editorLangId == java"
+
+[[contributes.menus]]
+menu = "projectView.context"
+command = "preview"
+
+[[contributes.menus]]
+menu = "tools"
+command = "preview"
+
+[[contributes.views]]
+id = "sync"
+title = "Java YApi Sync"
+icon = "icon.svg"
+location = "right"
