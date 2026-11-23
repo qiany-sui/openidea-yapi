@@ -36,13 +36,20 @@ jobs:
           gzip --decompress "$RUNNER_TEMP/openidea-plugin.gz"
           chmod +x "$RUNNER_TEMP/openidea-plugin"
           "$RUNNER_TEMP/openidea-plugin" check .
-          "$RUNNER_TEMP/openidea-plugin" pack . --out dist/nc.yapi-0.2.0.oiplugin
-          "$RUNNER_TEMP/openidea-plugin" check dist/nc.yapi-0.2.0.oiplugin
+          "$RUNNER_TEMP/openidea-plugin" pack . --out dist/nc.yapi-0.2.1.oiplugin
+          "$RUNNER_TEMP/openidea-plugin" check dist/nc.yapi-0.2.1.oiplugin
           cd dist
-          sha256sum nc.yapi-0.2.0.oiplugin > SHA256SUMS
+          sha256sum nc.yapi-0.2.1.oiplugin > SHA256SUMS
+      - name: Check with OpenIDEA 0.1.50
+        run: |
+          curl --fail --location --output "$RUNNER_TEMP/openidea-plugin-latest.gz" https://github.com/l0ng-ai/openidea/releases/download/v0.1.50/openidea-plugin-linux-x86_64.gz
+          echo '4385ac22d894d77478e4492310dd709d858e99eb70549fa81df5107c4a3bd89f  '"$RUNNER_TEMP/openidea-plugin-latest.gz" | sha256sum --check
+          gzip --decompress "$RUNNER_TEMP/openidea-plugin-latest.gz"
+          chmod +x "$RUNNER_TEMP/openidea-plugin-latest"
+          "$RUNNER_TEMP/openidea-plugin-latest" check dist/nc.yapi-0.2.1.oiplugin
       - uses: actions/upload-artifact@v4
         with:
           name: unsigned-release
           path: |
-            dist/nc.yapi-0.2.0.oiplugin
+            dist/nc.yapi-0.2.1.oiplugin
             dist/SHA256SUMS
