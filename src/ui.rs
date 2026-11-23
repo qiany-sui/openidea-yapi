@@ -53,8 +53,10 @@ fn scan(p: &Project, selected: &[String], config: &MavenConfig) -> Result<Vec<pa
         return Err("请在 Controller 文件上执行「YApi：预览并同步」".into());
     }
     let mut paths = p.find_files("**/*.java", 5001)?;
-    if paths.len() > 5000 {
-        return Err("Java 源码超过 5000 个文件，请打开较小的模块后同步".into());
+    // 小项目保留多顶层类/非标准文件名的解析兼容；大项目只读取接口用到的类型。
+    let on_demand = paths.len() > 5000;
+    if on_demand {
+        paths.clear();
     }
     for path in selected {
         if !paths.contains(path) {
@@ -62,21 +64,38 @@ fn scan(p: &Project, selected: &[String], config: &MavenConfig) -> Result<Vec<pa
         }
     }
     let mut total = 0;
-    let mut input = Vec::new();
-    let count = paths.len() as u32;
-    for (index, path) in paths.into_iter().enumerate() {
+    let mut cache = BTreeMap::<String, String>::new();
+    let mut read = |path: &str| -> Result<String, Error> {
         if task.is_cancelled() {
             return Err(Error::Cancelled);
         }
-        task.report(index as u32, Some(count), Some("读取 Java 源码"));
-        let text = p.read_file(&path)?;
+        if let Some(text) = cache.get(path) {
+            return Ok(text.clone());
+        }
+        task.report(cache.len() as u32, None, Some("读取接口相关 Java 源码"));
+        if cache.len() >= 5000 {
+            return Err("接口相关 Java 源码超过 5000 个文件，请减少所选 Controller".into());
+        }
+        let text = p.read_file(path)?;
         if text.len() > 1024 * 1024 {
             return Err("单个 Java 文件超过 1 MiB，请缩小源码文件后同步".into());
+        }
+        if on_demand && parse::declared_types(&text).len() > 1 {
+            return Err(format!(
+                "大项目按需解析要求每个类型使用独立文件，请拆分 {path} 中的多个类型"
+            )
+            .into());
         }
         total += text.len();
         if total > 20 * 1024 * 1024 {
             return Err("Java 源码超过 20 MiB，请打开较小的模块后同步".into());
         }
+        cache.insert(path.to_owned(), text.clone());
+        Ok(text)
+    };
+    let mut input = Vec::new();
+    for path in paths {
+        let text = read(&path)?;
         input.push((path, text));
     }
     let mut apis = Vec::new();
@@ -85,7 +104,40 @@ fn scan(p: &Project, selected: &[String], config: &MavenConfig) -> Result<Vec<pa
         apis.extend(parse::analyze_with_resolver(
             &input,
             std::slice::from_ref(path),
-            &mut |names| resolver.resolve(names),
+            &mut |names| {
+                if task.is_cancelled() {
+                    return Err("解析已取消".into());
+                }
+                if on_demand {
+                    let mut candidates = std::collections::BTreeSet::new();
+                    for name in names {
+                        let simple = name.rsplit('.').next().unwrap_or(name);
+                        let found = p
+                            .find_files(&format!("**/{simple}.java"), 5001)
+                            .map_err(|e| e.to_string())?;
+                        if found.len() > 5000 {
+                            return Err(format!(
+                                "类型 {simple} 的候选源码超过 5000 个，请打开较小的模块"
+                            ));
+                        }
+                        candidates.extend(found);
+                    }
+                    let mut sources = Vec::new();
+                    for candidate in candidates {
+                        let text = read(&candidate).map_err(|e| e.to_string())?;
+                        if parse::declared_types(&text)
+                            .iter()
+                            .any(|name| names.contains(name))
+                        {
+                            sources.push((candidate, text));
+                        }
+                    }
+                    if !sources.is_empty() {
+                        return Ok(sources);
+                    }
+                }
+                resolver.resolve(names)
+            },
         )?);
     }
     let mut identities = std::collections::BTreeSet::new();

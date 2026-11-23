@@ -265,3 +265,157 @@ fn dependency_failure_keeps_context_and_never_requests_yapi() {
     assert!(last(&h)["plan"].is_null());
     assert!(!h.process_runs().iter().any(|r| r.program == "curl"));
 }
+
+fn large_project() -> MockHost {
+    let h = MockHost::install().with_capabilities(&[
+        "project.read",
+        "editor.read",
+        "storage",
+        "process:curl",
+    ]);
+    for i in 0..5001 {
+        h.add_file(&format!("unrelated/Unused{i}.java"), "class Unused {}");
+    }
+    h
+}
+
+#[test]
+fn large_project_resolves_only_controller_dependencies_across_modules() {
+    let h = large_project();
+    h.add_file(
+        "api/C.java",
+        r#"package api; import dto.Input;
+        @RestController class C { @PostMapping("/internal/callback")
+        public Input call(@RequestBody Input body) { return body; } }"#,
+    );
+    h.add_file(
+        "model/Input.java",
+        "package dto; class Input { Detail detail; }",
+    );
+    h.add_file(
+        "model/Detail.java",
+        "package dto; class Detail { String name; }",
+    );
+    h.add_file(
+        "other/Input.java",
+        "package other; class Input { Missing wrong; }",
+    );
+    h.add_file("unrelated/Huge.java", &" ".repeat(1024 * 1024 + 1));
+    h.add_file("api/D.java", r#"package api; import dto.Input;
+        @RestController class D { @GetMapping("/internal/other") public Input get() { return null; } }"#);
+    h.open_editor(
+        "/project/model/Detail.java",
+        "java",
+        "package dto; class Detail { int count; }",
+        &[],
+    );
+    h.select_paths(&["/project/api/C.java", "/project/api/D.java"]);
+    let mut p = YapiPlugin::default();
+    p.run_command("preview", &h.invocation(), None).unwrap();
+    assert!(last(&h)["status"].as_str().unwrap().contains("2"));
+    assert!(h.process_runs().is_empty());
+    h.on_process("curl", |_, stdin| {
+        let data = if stdin.unwrap().contains("/api/project/get") {
+            json!({"_id":1,"name":"fixture"})
+        } else {
+            json!([])
+        };
+        Ok(ProcessOutput {
+            status: Some(0),
+            stdout: format!("{}\nOI_YAPI_STATUS:200", json!({"errcode":0,"data":data})),
+            stderr: String::new(),
+        })
+    });
+    event(
+        &mut p,
+        &h,
+        json!({"action":"preview","base":"http://fixture","token":"fixture-token"}),
+    );
+    let plan = last(&h);
+    assert_eq!(plan["plan"]["items"].as_array().unwrap().len(), 2, "{plan}");
+    for item in plan["plan"]["items"].as_array().unwrap() {
+        let schema: Value =
+            serde_json::from_str(item["payload"]["res_body"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            schema["properties"]["detail"]["properties"]["count"]["type"],
+            "integer"
+        );
+        assert!(schema["properties"].get("wrong").is_none());
+    }
+}
+
+#[test]
+fn large_project_keeps_wildcard_import_ambiguity_and_size_guards() {
+    for (imports, dto, expected) in [
+        (
+            "import a.*; import b.*;",
+            "package a; class Input { String name; }".to_string(),
+            "同名歧义",
+        ),
+        ("import a.Input;", " ".repeat(1024 * 1024 + 1), "1 MiB"),
+    ] {
+        let h = large_project();
+        h.add_file("C.java", &format!("{imports} @RestController class C {{ @GetMapping(\"/x\") public Input get() {{ return null; }} }}"));
+        h.add_file("a/Input.java", &dto);
+        h.add_file("b/Input.java", "package b; class Input { int id; }");
+        h.select_paths(&["/project/C.java"]);
+        let error = YapiPlugin::default()
+            .run_command("preview", &h.invocation(), None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{error}");
+        assert!(h.process_runs().is_empty());
+    }
+}
+
+#[test]
+fn small_project_keeps_types_declared_in_non_matching_filenames() {
+    let h = MockHost::install();
+    h.add_file(
+        "C.java",
+        r#"@RestController class C { @GetMapping("/x") public Reply get(){ return null; } }"#,
+    );
+    h.add_file(
+        "Models.java",
+        "class Reply { String text; } class Other { int id; }",
+    );
+    h.select_paths(&["/project/C.java"]);
+    YapiPlugin::default()
+        .run_command("preview", &h.invocation(), None)
+        .unwrap();
+}
+
+#[test]
+fn large_project_rejects_duplicate_fully_qualified_dtos() {
+    let h = large_project();
+    h.add_file("C.java", r#"import dto.Reply; @RestController class C { @GetMapping("/x") public Reply get(){ return null; } }"#);
+    for module in ["one", "two"] {
+        h.add_file(
+            &format!("{module}/Reply.java"),
+            "package dto; class Reply { String text; }",
+        );
+    }
+    h.select_paths(&["/project/C.java"]);
+    let e = YapiPlugin::default()
+        .run_command("preview", &h.invocation(), None)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("同名歧义"), "{e}");
+}
+
+#[test]
+fn large_project_does_not_hide_duplicate_types_in_multi_class_files() {
+    let h = large_project();
+    h.add_file("C.java", r#"import dto.Input; @RestController class C { @GetMapping("/x") public Input get(){ return null; } }"#);
+    h.add_file(
+        "Input.java",
+        "package dto; class Input { Detail value; } class Detail { String text; }",
+    );
+    h.add_file("Detail.java", "package dto; class Detail { int id; }");
+    h.select_paths(&["/project/C.java"]);
+    let e = YapiPlugin::default()
+        .run_command("preview", &h.invocation(), None)
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("独立文件"), "{e}");
+}
