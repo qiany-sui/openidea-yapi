@@ -56,6 +56,21 @@ fn source(text: &str) -> Source {
     }
 }
 
+// 文件路径仅用于缩小查找范围，真实类型身份以源码声明为准。
+pub(crate) fn declared_types(text: &str) -> Vec<String> {
+    let s = source(text);
+    s.classes
+        .iter()
+        .map(|c| {
+            if s.package.is_empty() {
+                c.name.clone()
+            } else {
+                format!("{}.{}", s.package, c.name)
+            }
+        })
+        .collect()
+}
+
 fn generic(t: &str) -> Result<(&str, Vec<&str>), String> {
     if let Some(i) = t.find('<') {
         let body = t[i + 1..]
@@ -537,7 +552,7 @@ pub fn analyze_with_resolver(
             input.push((path, text));
         }
     }
-    Err("外部类型引用超过 64 次，请缩小同步范围".into())
+    Err("类型引用超过 64 次，请缩小同步范围".into())
 }
 
 fn analyze_sources(

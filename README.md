@@ -30,7 +30,7 @@
 
 | 能力 | 原因 |
 | --- | --- |
-| `project.read` | 读取所选 Controller 和项目内 DTO 源码；每次最多 5000 个 Java 文件、总计 20 MiB，单文件最多 1 MiB |
+| `project.read` | 读取所选 Controller 和项目内 DTO 源码；小项目保持全量读取，超过 5000 个 Java 文件时按需查找接口相关类型，每次实际读取最多 5000 个文件、总计 20 MiB，单文件最多 1 MiB |
 | `editor.read` | 获取当前 Controller 文件入口 |
 | `storage` | 按本地项目保存 YApi 地址与 Maven 路径，不保存 token 或 settings.xml 内容 |
 | `process:curl` | 向用户配置的 YApi 发起 HTTP(S) 请求，兼容内网 HTTP |
@@ -58,6 +58,8 @@ HTTP 是明文传输，只应在你认可的内网使用。GET 的 query token �
 `Object` 对应不限制 JSON 类型的 schema `{}`，`Map<String,Object>` 对应允许任意值的对象；不会臆造动态键。依赖读取器不调用静态初始化、构造器或 getter。Maven 使用受信任项目的配置和扩展；本机缺少实际 JAR、类型歧义或无法表达的序列化规则仍需处理后再同步。每次同步会重新解析依赖，防止预览后版本变化。
 
 以下结构会报错而不生成部分 schema：缺失或有歧义的 DTO、继承、enum、循环引用、泛型边界、不支持的 Jackson 序列化注解、文件上传/Cookie/复杂查询参数、动态路径或映射条件。不解析 Kotlin、运行时配置、ControllerAdvice、全局响应包装、自定义注解或自定义 Jackson 序列化器。Java 标识符解析目前限 ASCII；classpath 中同名类按依赖顺序首次命中，不模拟运行期类加载器。扫描源码不是运行期契约推导，预览时仍应核对实际接口行为。
+
+大项目源码查找：项目超过 5000 个 Java 文件时，先读取所选 Controller，再按接口模型引用的 `类型名.java` 查找源码，校验真实 package/class 后解析，项目源码优先于 Maven 依赖。此模式要求每个类型使用独立文件，DTO 文件名与类型名一致；一个文件声明多个类型时会明确报错，避免漏检附带类型的同名歧义。将未被读取的 package-private 类型放在其他名称文件中的布局暂不支持。找不到定义时仍明确报错，不生成占位 schema。小项目保留原有多顶层类/非标准文件名兼容。
 
 ## 构建、验证与分享
 
