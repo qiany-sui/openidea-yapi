@@ -53,6 +53,8 @@ pub struct MethodRaw {
 #[derive(Debug, Clone)]
 pub struct JavaClass {
     pub name: String,
+    /// 包内的类型路径，保留外部类以区分同名成员类型。
+    pub qualified_name: String,
     /// 原始类型声明，用于拒绝不支持的继承并解析泛型参数。
     pub declaration: String,
     pub incomplete: bool,
@@ -289,7 +291,7 @@ impl JavaFile {
                 let ok_left = i == 0
                     || s[i - 1].is_whitespace()
                     || matches!(s[i - 1], '{' | '}' | ';' | ')' | ',');
-                if ok_left && let Some(end) = self.parse_one_class(i, &s) {
+                if ok_left && let Some(end) = self.parse_one_class(i, &s, "") {
                     i = end;
                     continue;
                 }
@@ -300,7 +302,7 @@ impl JavaFile {
 
     /// Parses the class whose `class`/`interface`/`enum`/`record` keyword starts at `kw`.
     /// `s` is the current scan view. Returns the char offset just past the class body.
-    fn parse_one_class(&mut self, kw: usize, s: &[char]) -> Option<usize> {
+    fn parse_one_class(&mut self, kw: usize, s: &[char], enclosing: &str) -> Option<usize> {
         let code = self.code.clone();
         let n = s.len();
         let kind = {
@@ -357,7 +359,13 @@ impl JavaFile {
         let anns = collect_annotations(s, &code, kw);
         let javadoc = self.javadoc_before(kw);
 
+        let qualified_name = if enclosing.is_empty() {
+            name.clone()
+        } else {
+            format!("{enclosing}.{name}")
+        };
         let mut cls = JavaClass {
+            qualified_name,
             name,
             declaration: code[kw..body_open].iter().collect(),
             incomplete: false,
@@ -414,9 +422,6 @@ impl JavaFile {
                     if depth == 0 && paren == 0 {
                         let header: String = s[stmt_start..j].iter().collect();
                         let header_t = header.trim();
-                        let is_type = ["class ", "interface ", "enum ", "record "]
-                            .iter()
-                            .any(|w| find_word_in(header_t, w.trim_end()));
                         let has_paren = header_t.contains('(');
                         // An '=' before the first '(' marks a field initializer or
                         // lambda (`int[] a = {...}`, `Runnable r = () -> {...}`);
@@ -428,10 +433,11 @@ impl JavaFile {
                             (Some(_), None) => true,
                             _ => false,
                         };
-                        if is_type && !has_paren {
+                        if !init_before_paren
+                            && let Some(kw_off) = self.find_type_keyword(stmt_start, j)
+                        {
                             // nested type (annotations may precede)
-                            if let Some(kw_off) = self.find_type_keyword(stmt_start, j)
-                                && let Some(end) = self.parse_one_class(kw_off, s)
+                            if let Some(end) = self.parse_one_class(kw_off, s, &cls.qualified_name)
                             {
                                 j = end;
                                 stmt_start = j;
@@ -492,9 +498,29 @@ impl JavaFile {
 
     fn find_type_keyword(&self, stmt_start: usize, brace: usize) -> Option<usize> {
         let s = &self.scan;
+        let mut parens = 0;
         for i in stmt_start..brace {
+            match s[i] {
+                '(' => {
+                    parens += 1;
+                    continue;
+                }
+                ')' => {
+                    parens -= 1;
+                    continue;
+                }
+                _ => {}
+            }
+            if parens != 0 {
+                continue;
+            }
             for w in ["class", "interface", "enum", "record"] {
                 if starts_word(s, i, w)
+                    && s.get(i + w.len()).is_some_and(|c| c.is_whitespace())
+                    && s[i + w.len()..brace]
+                        .iter()
+                        .find(|c| !c.is_whitespace())
+                        .is_some_and(|c| is_id(*c))
                     && (i == 0
                         || s[i - 1].is_whitespace()
                         || matches!(s[i - 1], '{' | '}' | ';' | ')' | ','))
@@ -807,23 +833,6 @@ pub fn starts_word(s: &[char], i: usize, w: &str) -> bool {
         return false;
     }
     s[i..i + wc.len()] == wc[..] && (i + wc.len() >= s.len() || !is_id(s[i + wc.len()]))
-}
-
-fn find_word_in(text: &str, w: &str) -> bool {
-    let wc: Vec<char> = w.chars().collect();
-    let tc: Vec<char> = text.chars().collect();
-    if tc.len() < wc.len() {
-        return false;
-    }
-    for i in 0..=tc.len() - wc.len() {
-        if tc[i..i + wc.len()] == wc[..]
-            && (i + wc.len() >= tc.len() || !is_id(tc[i + wc.len()]))
-            && (i == 0 || !is_id(tc[i - 1]))
-        {
-            return true;
-        }
-    }
-    false
 }
 
 /// Index of the matching close for the opener at `at` (1 level).

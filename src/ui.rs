@@ -47,6 +47,15 @@ fn config_key(root: &str) -> String {
         Sha256::digest(format!("{root}\0config").as_bytes())
     )
 }
+fn check_top_level_types(path: &str, text: &str) -> Result<(), Error> {
+    if parse::top_level_type_count(text) > 1 {
+        return Err(format!(
+            "大项目按需解析要求每个顶层类型使用独立文件，请拆分 {path} 中的多个顶层类型"
+        )
+        .into());
+    }
+    Ok(())
+}
 fn scan(p: &Project, selected: &[String], config: &MavenConfig) -> Result<Vec<parse::Api>, Error> {
     let task = host::begin_task("YApi：解析 Controller 与 DTO", true);
     if selected.is_empty() {
@@ -80,12 +89,6 @@ fn scan(p: &Project, selected: &[String], config: &MavenConfig) -> Result<Vec<pa
         if text.len() > 1024 * 1024 {
             return Err("单个 Java 文件超过 1 MiB，请缩小源码文件后同步".into());
         }
-        if on_demand && parse::declared_types(&text).len() > 1 {
-            return Err(format!(
-                "大项目按需解析要求每个类型使用独立文件，请拆分 {path} 中的多个类型"
-            )
-            .into());
-        }
         total += text.len();
         if total > 20 * 1024 * 1024 {
             return Err("Java 源码超过 20 MiB，请打开较小的模块后同步".into());
@@ -96,6 +99,9 @@ fn scan(p: &Project, selected: &[String], config: &MavenConfig) -> Result<Vec<pa
     let mut input = Vec::new();
     for path in paths {
         let text = read(&path)?;
+        if on_demand {
+            check_top_level_types(&path, &text)?;
+        }
         input.push((path, text));
     }
     let mut apis = Vec::new();
@@ -111,16 +117,18 @@ fn scan(p: &Project, selected: &[String], config: &MavenConfig) -> Result<Vec<pa
                 if on_demand {
                     let mut candidates = std::collections::BTreeSet::new();
                     for name in names {
-                        let simple = name.rsplit('.').next().unwrap_or(name);
-                        let found = p
-                            .find_files(&format!("**/{simple}.java"), 5001)
-                            .map_err(|e| e.to_string())?;
-                        if found.len() > 5000 {
-                            return Err(format!(
-                                "类型 {simple} 的候选源码超过 5000 个，请打开较小的模块"
-                            ));
+                        // 成员类型声明在外部类文件中，例如 dto.Outer.Inner 位于 Outer.java。
+                        for simple in name.rsplit('.') {
+                            let found = p
+                                .find_files(&format!("**/{simple}.java"), 5001)
+                                .map_err(|e| e.to_string())?;
+                            if found.len() > 5000 {
+                                return Err(format!(
+                                    "类型 {simple} 的候选源码超过 5000 个，请打开较小的模块"
+                                ));
+                            }
+                            candidates.extend(found);
                         }
-                        candidates.extend(found);
                     }
                     let mut sources = Vec::new();
                     for candidate in candidates {
@@ -129,6 +137,7 @@ fn scan(p: &Project, selected: &[String], config: &MavenConfig) -> Result<Vec<pa
                             .iter()
                             .any(|name| names.contains(name))
                         {
+                            check_top_level_types(&candidate, &text).map_err(|e| e.to_string())?;
                             sources.push((candidate, text));
                         }
                     }
