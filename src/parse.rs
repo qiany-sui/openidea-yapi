@@ -46,7 +46,7 @@ fn source(text: &str) -> Source {
             package = p.trim().into();
         }
         if let Some(p) = p.strip_prefix("import ") {
-            imports.push(p.trim().into());
+            imports.push(p.trim().strip_prefix("static ").unwrap_or(p.trim()).into());
         }
     }
     Source {
@@ -63,12 +63,20 @@ pub(crate) fn declared_types(text: &str) -> Vec<String> {
         .iter()
         .map(|c| {
             if s.package.is_empty() {
-                c.name.clone()
+                c.qualified_name.clone()
             } else {
-                format!("{}.{}", s.package, c.name)
+                format!("{}.{}", s.package, c.qualified_name)
             }
         })
         .collect()
+}
+
+pub(crate) fn top_level_type_count(text: &str) -> usize {
+    JavaFile::parse(text)
+        .classes
+        .iter()
+        .filter(|c| !c.qualified_name.contains('.'))
+        .count()
 }
 
 fn generic(t: &str) -> Result<(&str, Vec<&str>), String> {
@@ -100,44 +108,68 @@ fn generic(t: &str) -> Result<(&str, Vec<&str>), String> {
 fn resolve<'a>(
     name: &str,
     context: &Source,
+    scope: &str,
     files: &'a Sources,
 ) -> Result<(&'a Source, &'a JavaClass), String> {
     let qualify = |s: &Source, c: &JavaClass| {
         if s.package.is_empty() {
-            c.name.clone()
+            c.qualified_name.clone()
         } else {
-            format!("{}.{}", s.package, c.name)
+            format!("{}.{}", s.package, c.qualified_name)
         }
     };
     let all: Vec<_> = files
         .iter()
         .flat_map(|s| s.classes.iter().map(move |c| (s, c)))
         .collect();
-    let wanted: Vec<String> = if name.contains('.') {
-        vec![name.into()]
-    } else {
-        let explicit: Vec<_> = context
-            .imports
-            .iter()
-            .filter(|i| i.ends_with(&format!(".{name}")))
-            .cloned()
-            .collect();
-        if !explicit.is_empty() {
-            explicit
+    // 成员类型按词法作用域从内向外查找，不能与其他外部类的同名成员混用。
+    let mut enclosing = Some(scope);
+    while let Some(owner) = enclosing {
+        let local = if context.package.is_empty() {
+            format!("{owner}.{name}")
         } else {
-            let mut v = vec![if context.package.is_empty() {
-                name.into()
-            } else {
-                format!("{}.{name}", context.package)
-            }];
-            v.extend(
-                context
-                    .imports
-                    .iter()
-                    .filter_map(|i| i.strip_suffix('*').map(|i| format!("{i}{name}"))),
-            );
-            v
+            format!("{}.{owner}.{name}", context.package)
+        };
+        let matches: Vec<_> = all
+            .iter()
+            .copied()
+            .filter(|(s, c)| qualify(s, c) == local)
+            .collect();
+        match matches.as_slice() {
+            [found] => return Ok(*found),
+            [] => {}
+            _ => return Err(format!("类型 {name} 有同名歧义；未生成文档")),
         }
+        enclosing = owner.rsplit_once('.').map(|(parent, _)| parent);
+    }
+    let (first, suffix) = name
+        .split_once('.')
+        .map(|(first, rest)| (first, format!(".{rest}")))
+        .unwrap_or((name, String::new()));
+    let explicit: Vec<_> = context
+        .imports
+        .iter()
+        .filter(|i| i.ends_with(&format!(".{first}")))
+        .map(|i| format!("{i}{suffix}"))
+        .collect();
+    let wanted = if !explicit.is_empty() {
+        explicit
+    } else {
+        let mut v = vec![if context.package.is_empty() {
+            name.into()
+        } else {
+            format!("{}.{name}", context.package)
+        }];
+        v.extend(
+            context
+                .imports
+                .iter()
+                .filter_map(|i| i.strip_suffix('*').map(|i| format!("{i}{name}"))),
+        );
+        if name.contains('.') && !v.contains(&name.to_owned()) {
+            v.push(name.into());
+        }
+        v
     };
     let matches: Vec<_> = all
         .into_iter()
@@ -156,6 +188,7 @@ fn resolve<'a>(
 fn schema(
     ty: &str,
     context: &Source,
+    scope: &str,
     files: &Sources,
     vars: &BTreeMap<String, Value>,
     stack: &mut Vec<String>,
@@ -167,7 +200,7 @@ fn schema(
     }
     if let Some(inner) = t.strip_suffix("[]") {
         return Ok(
-            json!({"type":"array","items":schema(inner,context,files,vars,stack,response)?}),
+            json!({"type":"array","items":schema(inner,context,scope,files,vars,stack,response)?}),
         );
     }
     let (base, args) = generic(t)?;
@@ -194,7 +227,7 @@ fn schema(
         return Ok(json!({}));
     }
     if matches!(short, "ResponseEntity" | "HttpEntity") && args.len() == 1 {
-        return schema(args[0], context, files, vars, stack, response);
+        return schema(args[0], context, scope, files, vars, stack, response);
     }
     if matches!(
         short,
@@ -202,7 +235,7 @@ fn schema(
     ) && args.len() == 1
     {
         return Ok(
-            json!({"type":"array","items":schema(args[0],context,files,vars,stack,response)?}),
+            json!({"type":"array","items":schema(args[0],context,scope,files,vars,stack,response)?}),
         );
     }
     if matches!(short, "Map" | "HashMap" | "LinkedHashMap")
@@ -210,10 +243,10 @@ fn schema(
         && matches!(args[0], "String" | "java.lang.String")
     {
         return Ok(
-            json!({"type":"object","additionalProperties":schema(args[1],context,files,vars,stack,response)?}),
+            json!({"type":"object","additionalProperties":schema(args[1],context,scope,files,vars,stack,response)?}),
         );
     }
-    let (file, cls) = resolve(base, context, files)?;
+    let (file, cls) = resolve(base, context, scope, files)?;
     if cls.incomplete {
         return Err(format!("类型 {base} 有无法完整解析的字段声明"));
     }
@@ -225,7 +258,7 @@ fn schema(
             cls.kind
         ));
     }
-    let key = format!("{}.{t}", file.package);
+    let key = format!("{}.{}<{:?}>", file.package, cls.qualified_name, args);
     if stack.contains(&key) || stack.len() >= 20 {
         return Err(format!("类型 {t} 存在循环引用或嵌套过深"));
     }
@@ -247,7 +280,7 @@ fn schema(
     for (p, a) in params.iter().zip(args) {
         bindings.insert(
             (*p).into(),
-            schema(a, context, files, vars, stack, response)?,
+            schema(a, context, scope, files, vars, stack, response)?,
         );
     }
     let mut filtered = cls.clone();
@@ -412,8 +445,16 @@ fn schema(
     let mut properties = serde_json::Map::new();
     let mut required = Vec::new();
     for f in doc.fields {
-        let mut field = schema(&f.java_type, file, files, &bindings, stack, response)
-            .map_err(|error| format!("字段 {base}.{}：{error}", f.name))?;
+        let mut field = schema(
+            &f.java_type,
+            file,
+            &cls.qualified_name,
+            files,
+            &bindings,
+            stack,
+            response,
+        )
+        .map_err(|error| format!("字段 {base}.{}：{error}", f.name))?;
         if !f.desc.is_empty() {
             field["description"] = json!(f.desc);
         }
@@ -619,12 +660,23 @@ fn analyze_sources(
                     let request_schema = ep
                         .request_body
                         .as_ref()
-                        .map(|t| schema(t, file, files, &BTreeMap::new(), &mut vec![], false))
+                        .map(|t| {
+                            schema(
+                                t,
+                                file,
+                                &cls.qualified_name,
+                                files,
+                                &BTreeMap::new(),
+                                &mut vec![],
+                                false,
+                            )
+                        })
                         .transpose()
                         .map_err(|error| format!("{context}\n请求体：{error}"))?;
                     let response_schema = schema(
                         &m.return_type,
                         file,
+                        &cls.qualified_name,
                         files,
                         &BTreeMap::new(),
                         &mut vec![],
@@ -661,6 +713,7 @@ fn analyze_sources(
                             let s = schema(
                                 &p.java_type,
                                 file,
+                                &cls.qualified_name,
                                 files,
                                 &BTreeMap::new(),
                                 &mut vec![],
@@ -683,6 +736,7 @@ fn analyze_sources(
                         let shape = schema(
                             &p.java_type,
                             file,
+                            &cls.qualified_name,
                             files,
                             &BTreeMap::new(),
                             &mut vec![],

@@ -419,3 +419,96 @@ fn large_project_does_not_hide_duplicate_types_in_multi_class_files() {
         .to_string();
     assert!(e.contains("独立文件"), "{e}");
 }
+
+#[test]
+fn issue_3_nested_response_generates_complete_yapi_preview_in_large_and_small_projects() {
+    for large in [false, true] {
+        let h = if large {
+            large_project()
+        } else {
+            MockHost::install().with_capabilities(&[
+                "project.read",
+                "editor.read",
+                "storage",
+                "process:curl",
+            ])
+        };
+        h.add_file(
+            "ModelAchievementController.java",
+            include_str!("fixtures/nested/ModelAchievementController.java"),
+        );
+        h.add_file(
+            "ModelAchievementOverviewResp.java",
+            include_str!("fixtures/nested/ModelAchievementOverviewResp.java"),
+        );
+        h.select_paths(&["/project/ModelAchievementController.java"]);
+        let mut p = YapiPlugin::default();
+        p.run_command("preview", &h.invocation(), None).unwrap();
+        assert!(h.process_runs().is_empty());
+        h.on_process("curl", |_, stdin| {
+            let data = if stdin.unwrap().contains("/api/project/get") {
+                json!({"_id":1,"name":"fixture"})
+            } else {
+                json!([])
+            };
+            Ok(ProcessOutput {
+                status: Some(0),
+                stdout: format!("{}\nOI_YAPI_STATUS:200", json!({"errcode":0,"data":data})),
+                stderr: String::new(),
+            })
+        });
+        event(
+            &mut p,
+            &h,
+            json!({"action":"preview","base":"http://fixture","token":"fixture-token"}),
+        );
+        let result = last(&h);
+        let items = result["plan"]["items"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{result}"));
+        assert_eq!(items.len(), 1);
+        let payload = &items[0]["payload"];
+        assert_eq!(payload["path"], "/model/achievement/overview");
+        let schema: Value = serde_json::from_str(payload["res_body"].as_str().unwrap()).unwrap();
+        assert_eq!(schema["properties"].as_object().unwrap().len(), 6);
+        for section in [
+            "model",
+            "warning",
+            "judged",
+            "product",
+            "battle",
+            "instruction",
+        ] {
+            let props = &schema["properties"][section]["properties"];
+            assert_eq!(props.as_object().unwrap().len(), 2);
+            assert_eq!(props["total"]["type"], "integer");
+            assert_eq!(props["mom"]["type"], "integer");
+        }
+    }
+}
+
+#[test]
+fn large_project_finds_direct_nested_response_in_outer_file() {
+    for (imports, ty) in [
+        ("import dto.Outer;", "Outer.Inner"),
+        ("import dto.Outer.Inner;", "Inner"),
+        ("import static dto.Outer.Inner;", "Inner"),
+        ("", "dto.Outer.Inner"),
+    ] {
+        let h = large_project();
+        h.add_file("C.java", &format!(r#"package api; {imports} @RestController class C {{ @GetMapping("/nested") public {ty} get() {{ return null; }} }}"#));
+        h.add_file(
+            "Outer.java",
+            "package dto; class Outer { static class Inner { String value; } }",
+        );
+        h.add_file(
+            "unrelated/dto.java",
+            "package unrelated; class dto {} class Other {}",
+        );
+        h.select_paths(&["/project/C.java"]);
+        YapiPlugin::default()
+            .run_command("preview", &h.invocation(), None)
+            .unwrap();
+        assert!(h.process_runs().is_empty());
+    }
+}
