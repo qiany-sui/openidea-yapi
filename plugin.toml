@@ -1,6 +1,6 @@
 id = "nc.yapi"
 name = "Java YApi Sync"
-version = "0.2.1"
+version = "0.2.2"
 description = "从 Java Spring MVC Controller 同步接口到 YApi，支持 Maven 依赖类型与内网 HTTP。"
 authors = ["Nc"]
 license = "MIT"
