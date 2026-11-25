@@ -1,6 +1,6 @@
 # Java YApi Sync 协作约定
 
-独立社区插件 `nc.yapi`，当前版本 `0.2.2`，面向 Java Spring MVC 与 Maven。
+独立社区插件 `nc.yapi`，当前版本 `0.2.3`，面向 Java Spring MVC 与 Maven。
 源码仓库：https://github.com/qiany-sui/openidea-yapi 。不修改宿主、YApi 服务端或业务源码。
 
 ## 实现与权限

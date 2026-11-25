@@ -10,9 +10,9 @@
 3. 将已有密钥路径通过本机环境变量 `YAPI_PUBLISHER_KEY` 提供给官方 CLI；变量内容是路径，私钥不进入命令参数或日志。
 
    ```sh
-   mkdir -p dist/releases/0.2.2
-   openidea-plugin pack . --key "$YAPI_PUBLISHER_KEY" --publisher nc --out dist/releases/0.2.2/nc.yapi-0.2.2.oiplugin
-   openidea-plugin check dist/releases/0.2.2/nc.yapi-0.2.2.oiplugin
+   mkdir -p dist/releases/0.2.3
+   openidea-plugin pack . --key "$YAPI_PUBLISHER_KEY" --publisher nc --out dist/releases/0.2.3/nc.yapi-0.2.3.oiplugin
+   openidea-plugin check dist/releases/0.2.3/nc.yapi-0.2.3.oiplugin
    ```
 
 4. 验证签名的公钥与 `l0ng-ai/openidea-plugins` 中 `publishers/nc.toml` 一致。签名后不再覆盖或修改该包；普通构建和 CI 的未签名包保留在另一目录。

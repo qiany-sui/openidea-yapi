@@ -1,6 +1,6 @@
 # Java YApi Sync
 
-从 Java Spring Controller 预览并同步接口到标准 YApi。独立插件 `nc.yapi`，无需修改 OpenIDEA 或改造 YApi，依赖类型读取器随单个插件包分发。当前版本 0.2.2，最低宿主插件 API **1.8**（OpenIDEA v0.1.45）。
+从 Java Spring Controller 预览并同步接口到标准 YApi。独立插件 `nc.yapi`，无需修改 OpenIDEA 或改造 YApi，依赖类型读取器随单个插件包分发。当前版本 0.2.3，最低宿主插件 API **1.8**（OpenIDEA v0.1.45）。
 
 [源码](https://github.com/qiany-sui/openidea-yapi) · [发行包](https://github.com/qiany-sui/openidea-yapi/releases) · [构建检查](https://github.com/qiany-sui/openidea-yapi/actions/workflows/ci.yml)
 
@@ -10,7 +10,7 @@
 
 ## 安装与使用
 
-1. 从 [GitHub Releases](https://github.com/qiany-sui/openidea-yapi/releases) 下载 `nc.yapi-0.2.2.oiplugin`，在 OpenIDEA 插件设置中选择 **从插件包文件安装…**。正式发行包由 `nc` 发布者签名，下载后可用附件 `SHA256SUMS` 核验。市场审核及索引同步完成后，也可在插件市场搜索 **Java YApi Sync** 安装；Release 发布和市场上架是两个独立步骤。
+1. 从 [GitHub Releases](https://github.com/qiany-sui/openidea-yapi/releases) 下载 `nc.yapi-0.2.3.oiplugin`，在 OpenIDEA 插件设置中选择 **从插件包文件安装…**。正式发行包由 `nc` 发布者签名，下载后可用附件 `SHA256SUMS` 核验。市场审核及索引同步完成后，也可在插件市场搜索 **Java YApi Sync** 安装；Release 发布和市场上架是两个独立步骤。
 2. 安装 curl，并在 OpenIDEA 的正常权限界面为 `process:curl` 授权实际可执行文件。插件按程序名 `curl` 调用，不写死系统路径，也不经过 shell；Windows 应选择 `curl.exe`，不是 PowerShell 的命令别名。macOS、Linux 选择本机实际的 curl。无需凭据管理工具。
 3. 如 DTO 或 `ApiResponse<T>` 来自外部依赖，安装 JDK 17+ 与 Maven，在插件权限页分别授权 `process:java`、`process:mvn`。Java 元数据读取器已包含在插件内，不需要安装辅助服务。Maven 必须能使用本机已有依赖（含 `maven-dependency-plugin:3.8.1` 与 `maven-help-plugin`）；缺少缓存时先在正常 Maven 环境下载。本插件以离线模式运行，不自动拉取依赖。自定义 `settings.xml` 或本地仓库可在面板的「Maven 依赖解析设置」填写路径。
 4. 打开并信任 Java 项目，在 Controller 编辑器或项目树的 Java 文件上执行 **YApi：预览并同步 Controller**。支持多选文件；不递归同步选中的目录。
@@ -78,11 +78,13 @@ cargo build --locked --release --target wasm32-wasip2
 mkdir -p dist
 cp target/wasm32-wasip2/release/openidea_yapi.wasm dist/plugin.wasm
 openidea-plugin check .
-openidea-plugin pack . --out dist/nc.yapi-0.2.2.oiplugin
-openidea-plugin check dist/nc.yapi-0.2.2.oiplugin
+openidea-plugin pack . --out dist/nc.yapi-0.2.3.oiplugin
+openidea-plugin check dist/nc.yapi-0.2.3.oiplugin
 ```
 
 HTTP 集成测试需要允许 127.0.0.1 临时监听，只访问进程内测试服务，使用虚构 token；不依赖真实 YApi。
+
+0.2.3 修复 `@JsonFormat` 导致整个接口无法预览的问题，支持常见日期格式与时区说明，覆盖字段、getter、record、JsonCreator 参数和依赖字节码；自定义日期模板不再错误标记为 ISO 格式。79 项 Rust 测试、3 项 Java 测试及插件包检查通过；本版未重新进行桌面实机验收。
 
 0.2.2 修复静态内部类被误判为多个顶层类型的问题，保留外围类型作用域，并支持从外部类文件解析成员类型、带参数注解及嵌套 record。65 项 Rust 测试、3 项 Java 测试及插件包检查通过；本版未重新进行桌面实机验收。
 
@@ -93,7 +95,7 @@ HTTP 集成测试需要允许 127.0.0.1 临时监听，只访问进程内测试�
 真实 Maven 多模块工程的两个 Controller 接口已通过生产解析链路生成模型，并在获授权的临时 YApi 项目完成新增、结构回读和再次预览「未变化」验证。随后在安装版 WASM 插件中完成 Java/Maven 正常授权，实际预览核对动态 Map/Object、外部泛型包装和 record 响应，重复同步结果为「新增 0，更新 0，未变化 2」；远端回读确认 schema 一致、ID 保留且无重复。此轮桌面测试未产生新增或更新，不将原生写入测试冒充桌面写入测试。测试不运行或修改业务服务；真实地址、token 和业务数据不进入仓库或发行包。
 
 正式发行使用发布者私钥签名，具体步骤见 [PUBLISHING.md](PUBLISHING.md)：
-`openidea-plugin pack . --key <仓库外的私钥路径> --publisher nc --out dist/nc.yapi-0.2.2.oiplugin`。
+`openidea-plugin pack . --key <仓库外的私钥路径> --publisher nc --out dist/nc.yapi-0.2.3.oiplugin`。
 私钥和真实 token 不得放进源码、安装包或日志。最终须经过市场维护者审核，遵循规范并不表示已获官方审核。
 
 协议依据：[YApi Controller](https://github.com/YMFE/yapi/blob/master/server/controllers/interface.js)、[鉴权](https://github.com/YMFE/yapi/blob/master/server/controllers/base.js)。解析组件来源及完整许可证见 NOTICE、LICENSE。
