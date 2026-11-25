@@ -512,3 +512,68 @@ fn large_project_finds_direct_nested_response_in_outer_file() {
         assert!(h.process_runs().is_empty());
     }
 }
+
+#[test]
+fn issue_5_json_format_reaches_yapi_preview_in_large_and_small_projects() {
+    for large in [false, true] {
+        let h = if large {
+            large_project()
+        } else {
+            MockHost::install().with_capabilities(&[
+                "project.read",
+                "editor.read",
+                "storage",
+                "process:curl",
+            ])
+        };
+        h.add_file(
+            "StatController.java",
+            r#"@RestController class StatController {
+            @GetMapping("/stats") public Stat stat() { return null; }
+        }"#,
+        );
+        h.add_file(
+            "Stat.java",
+            r#"class Stat {
+            @JsonFormat(pattern="yyyy-MM-dd", timezone="GMT+8") LocalDate statDate;
+        }"#,
+        );
+        h.select_paths(&["/project/StatController.java"]);
+        let mut p = YapiPlugin::default();
+        p.run_command("preview", &h.invocation(), None).unwrap();
+        assert!(h.process_runs().is_empty());
+        h.on_process("curl", |_, stdin| {
+            let data = if stdin.unwrap().contains("/api/project/get") {
+                json!({"_id":1,"name":"fixture"})
+            } else {
+                json!([])
+            };
+            Ok(ProcessOutput {
+                status: Some(0),
+                stdout: format!("{}\nOI_YAPI_STATUS:200", json!({"errcode":0,"data":data})),
+                stderr: String::new(),
+            })
+        });
+        event(
+            &mut p,
+            &h,
+            json!({"action":"preview","base":"http://fixture","token":"fixture-token"}),
+        );
+        let result = last(&h);
+        let item = &result["plan"]["items"][0];
+        assert_eq!(item["action"], "新增", "{result}");
+        assert_eq!(item["payload"]["path"], "/stats");
+        let schema: Value =
+            serde_json::from_str(item["payload"]["res_body"].as_str().unwrap()).unwrap();
+        let field = &schema["properties"]["statDate"];
+        assert_eq!(field["type"], "string");
+        assert!(field.get("format").is_none());
+        assert!(
+            field["description"]
+                .as_str()
+                .unwrap()
+                .contains("yyyy-MM-dd")
+        );
+        assert!(field["description"].as_str().unwrap().contains("GMT+8"));
+    }
+}
