@@ -122,6 +122,13 @@ public final class DependencyTypes {
                 tail = " extends " + parent.replace('/', '.');
             }
             String kind = (access & Opcodes.ACC_ENUM) != 0 ? "enum" : (access & Opcodes.ACC_INTERFACE) != 0 ? "interface" : "class";
+            if ((access & Opcodes.ACC_RECORD) != 0) {
+                kind = "record";
+                tail = tail.replace(" extends java.lang.Record", "");
+                int interfacesAt = tail.indexOf(" implements ");
+                // 字段仍由 visitField 提取；空组件头保留元数据的 record 身份。
+                tail = interfacesAt < 0 ? tail + "()" : tail.substring(0, interfacesAt) + "()" + tail.substring(interfacesAt);
+            }
             declaration = kind + " " + className + tail;
         }
         @Override public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {

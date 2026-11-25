@@ -150,3 +150,34 @@ fn review_schema_changes_remove_obsolete_structural_constraints() {
         serde_json::from_str(p.items[0].payload["res_body"].as_str().unwrap()).unwrap();
     assert!(schema.get("additionalProperties").is_none());
 }
+
+#[test]
+fn json_format_schema_syncs_updates_and_remains_idempotent() {
+    let mut server = Server::default();
+    for pattern in ["yyyy/MM/dd", "yyyy-MM-dd HH:mm:ss"] {
+        let source = format!(
+            r#"@RestController class Demo {{
+            @PostMapping("/stats") public Stat stat(@RequestBody Stat body) {{ return body; }}
+        }} class Stat {{ @JsonFormat(pattern="{pattern}", timezone="GMT+8") Date statDate; }}"#
+        );
+        let apis = parse::analyze(&[("Demo.java".into(), source)], &["Demo.java".into()]).unwrap();
+        let plan = preview(&mut server, &apis).unwrap();
+        execute(&mut server, &plan, &[0]).unwrap();
+        assert_eq!(server.interfaces.len(), 1);
+        assert_eq!(server.interfaces[0]["_id"], 10);
+        for body in ["req_body_other", "res_body"] {
+            let schema: Value =
+                serde_json::from_str(server.interfaces[0][body].as_str().unwrap()).unwrap();
+            let field = &schema["properties"]["statDate"];
+            assert_eq!(field["type"], "string");
+            assert!(field.get("format").is_none());
+            assert!(field["description"].as_str().unwrap().contains(pattern));
+        }
+        let retry = preview(&mut server, &apis).unwrap();
+        assert_eq!(retry.items[0].action, "未变化");
+        let writes = server.writes.len();
+        execute(&mut server, &retry, &[0]).unwrap();
+        assert_eq!(server.writes.len(), writes);
+    }
+    assert_eq!(server.writes.len(), 2);
+}

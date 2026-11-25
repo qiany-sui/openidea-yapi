@@ -54,6 +54,9 @@ HTTP 是明文传输，只应在你认可的内网使用。GET 的 query token �
 - 基本类型、数组、List/Set、String 键的 Map、Object 动态 JSON、项目内 DTO 与 record、简单泛型包装类；ResponseEntity/HttpEntity 的响应正文。
 - Maven 已解析版本对应的依赖 JAR 类型，按需提取字段、泛型及公开 getter；例如外部 `ApiResponse<YourDto>` 的 `data` 使用真实 DTO 展开，不硬编码包装字段。项目源码优先。
 - Javadoc、Swagger 常见说明，NotNull/NotEmpty/NotBlank、JsonProperty 重命名和 JsonIgnore；JsonCreator 属性构造参数的 required、常见 JsonInclude。计算 getter 仅进入响应模型。
+- `@JsonFormat`：Date、LocalDate、LocalDateTime、Instant、OffsetDateTime、ZonedDateTime 的字面量 pattern/timezone/locale；保留格式、时区和区域说明，自定义日期模板不冒充 JSON Schema 正则或 ISO `date-time`。支持标量 `shape=STRING` 及 Date 数值时间戳形状；字段、getter、record 和外部依赖元数据使用相同规则。字段与 getter 同时标注时，响应优先 getter，请求优先字段或 JsonCreator 参数的完整注解。
+
+`JsonFormat` 的默认值和 lenient 开关不会改变 schema；非字面量日期配置、类型级格式、非 getter 方法、容器格式、Java Time 数值/数组形状及显式 with/without 功能选项仍明确报错。插件不读取 ObjectMapper 全局配置，也不执行日期格式化代码。
 
 `Object` 对应不限制 JSON 类型的 schema `{}`，`Map<String,Object>` 对应允许任意值的对象；不会臆造动态键。依赖读取器不调用静态初始化、构造器或 getter。Maven 使用受信任项目的配置和扩展；本机缺少实际 JAR、类型歧义或无法表达的序列化规则仍需处理后再同步。每次同步会重新解析依赖，防止预览后版本变化。
 

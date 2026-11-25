@@ -622,7 +622,7 @@ impl JavaFile {
         while i < brace {
             if s[i] == '@' {
                 i += 1;
-                while i < brace && is_id(s[i]) {
+                while i < brace && (is_id(s[i]) || s[i] == '.') {
                     i += 1;
                 }
                 while i < brace && s[i].is_whitespace() {
@@ -670,7 +670,7 @@ impl JavaFile {
             }
             if s[i] == '@' {
                 i += 1;
-                while i < k && is_id(s[i]) {
+                while i < k && (is_id(s[i]) || s[i] == '.') {
                     i += 1;
                 }
                 while i < k && s[i].is_whitespace() {
@@ -741,6 +741,8 @@ impl JavaFile {
                     || *ch == ')'
                     || *ch == '"'
                     || *ch == '='
+                    || *ch == '.'
+                    || *ch == ','
                     || is_id(*ch)
             }) {
                 best = Some(c);
@@ -763,7 +765,10 @@ impl JavaFile {
             let between = &s[c.end..b];
             if between.iter().all(|ch| {
                 ch.is_whitespace()
-                    || matches!(*ch, '@' | '(' | ')' | '"' | '=' | ',' | ':' | '<' | '>')
+                    || matches!(
+                        *ch,
+                        '@' | '(' | ')' | '"' | '=' | ',' | ':' | '<' | '>' | '.'
+                    )
                     || is_id(*ch)
             }) {
                 best = Some(c);
@@ -794,7 +799,7 @@ pub fn strip_annotations(t: &str) -> String {
     while i < c.len() {
         if c[i] == '@' {
             i += 1;
-            while i < c.len() && is_id(c[i]) {
+            while i < c.len() && (is_id(c[i]) || c[i] == '.') {
                 i += 1;
             }
             while i < c.len() && c[i].is_whitespace() {
@@ -865,10 +870,15 @@ pub fn collect_annotations_range(s: &[char], code: &[char], a: usize, b: usize) 
     while i < b {
         if s[i] == '@' && i + 1 < b && is_id(s[i + 1]) {
             let mut j = i + 1;
-            while j < b && is_id(s[j]) {
+            while j < b && (is_id(s[j]) || s[j] == '.') {
                 j += 1;
             }
-            let name: String = s[i + 1..j].iter().collect();
+            let qualified: String = s[i + 1..j].iter().collect();
+            let name = qualified
+                .rsplit('.')
+                .next()
+                .unwrap_or(&qualified)
+                .to_owned();
             let mut k = j;
             while k < b && s[k].is_whitespace() {
                 k += 1;

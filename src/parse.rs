@@ -290,32 +290,35 @@ fn schema(
             && m.params_text.trim().is_empty()
             && !m.return_type.is_empty()
             && m.return_type != "void";
-        let property = if getter {
-            m.name
-                .strip_prefix("get")
-                .filter(|name| !name.is_empty())
-                .or_else(|| {
-                    if m.return_type == "boolean" {
-                        m.name.strip_prefix("is").filter(|n| !n.is_empty())
-                    } else {
-                        None
-                    }
-                })
-                .map(|name| {
-                    if name.chars().nth(1).is_some_and(char::is_uppercase) {
-                        name.to_string()
-                    } else {
-                        format!("{}{}", name[..1].to_lowercase(), &name[1..])
-                    }
-                })
-        } else {
-            None
-        };
+        let property =
+            if getter && cls.kind == "record" && cls.fields.iter().any(|f| f.name == m.name) {
+                Some(m.name.clone())
+            } else if getter {
+                m.name
+                    .strip_prefix("get")
+                    .filter(|name| !name.is_empty())
+                    .or_else(|| {
+                        if m.return_type == "boolean" {
+                            m.name.strip_prefix("is").filter(|n| !n.is_empty())
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|name| {
+                        if name.chars().nth(1).is_some_and(char::is_uppercase) {
+                            name.to_string()
+                        } else {
+                            format!("{}{}", name[..1].to_lowercase(), &name[1..])
+                        }
+                    })
+            } else {
+                None
+            };
         for a in &m.anns {
             if a.name.starts_with("Json")
                 && !matches!(
                     a.name.as_str(),
-                    "JsonCreator" | "JsonIgnore" | "JsonProperty" | "JsonInclude"
+                    "JsonCreator" | "JsonIgnore" | "JsonProperty" | "JsonInclude" | "JsonFormat"
                 )
             {
                 return Err(format!("类型 {base} 的方法使用暂不支持的 @{}", a.name));
@@ -325,7 +328,7 @@ fn schema(
             && m.anns.iter().any(|a| {
                 matches!(
                     a.name.as_str(),
-                    "JsonProperty" | "JsonIgnore" | "JsonInclude"
+                    "JsonProperty" | "JsonIgnore" | "JsonInclude" | "JsonFormat"
                 )
             })
         {
@@ -336,7 +339,14 @@ fn schema(
         }
         if let Some(name) = property {
             if let Some(field) = filtered.fields.iter_mut().find(|f| f.name == name) {
-                field.anns.extend(m.anns.clone());
+                // Jackson 的响应优先 getter；请求优先已有字段的完整注解。
+                let field_format = field.anns.iter().any(|a| a.name == "JsonFormat");
+                field.anns.extend(
+                    m.anns
+                        .iter()
+                        .filter(|a| a.name != "JsonFormat" || response || !field_format)
+                        .cloned(),
+                );
                 if response {
                     field.java_type = m.return_type.clone();
                 }
@@ -356,32 +366,42 @@ fn schema(
             {
                 return Err(format!("类型 {base} 的 JsonCreator 模式暂不支持"));
             }
-            if !response {
-                for param in java::split_args(&m.params_text) {
-                    let chars: Vec<_> = param.chars().collect();
-                    let annotations =
-                        java::collect_annotations_range(&chars, &chars, 0, chars.len());
-                    let property = annotations
-                        .iter()
-                        .find(|a| a.name == "JsonProperty")
-                        .ok_or_else(|| {
-                            format!("类型 {base} 的 JsonCreator 参数缺少 JsonProperty 名称")
-                        })?;
-                    let name = java::ann_string(property, "value")
-                        .or_else(|| java::first_string(&property.args))
-                        .ok_or("JsonCreator 参数名称无法解析")?;
-                    let field = filtered
-                        .fields
-                        .iter_mut()
-                        .find(|f| {
-                            f.name == name
-                                || f.anns.iter().any(|a| {
-                                    a.name == "JsonProperty"
-                                        && java::first_string(&a.args).as_deref() == Some(&name)
-                                })
-                        })
-                        .ok_or_else(|| format!("JsonCreator 参数 {name} 没有对应字段"))?;
+            for param in java::split_args(&m.params_text) {
+                let chars: Vec<_> = param.chars().collect();
+                let annotations = java::collect_annotations_range(&chars, &chars, 0, chars.len());
+                if response && !annotations.iter().any(|a| a.name == "JsonFormat") {
+                    continue;
+                }
+                let property = annotations
+                    .iter()
+                    .find(|a| a.name == "JsonProperty")
+                    .ok_or_else(|| {
+                        format!("类型 {base} 的 JsonCreator 参数缺少 JsonProperty 名称")
+                    })?;
+                let name = java::ann_string(property, "value")
+                    .or_else(|| java::first_string(&property.args))
+                    .ok_or("JsonCreator 参数名称无法解析")?;
+                let field = filtered
+                    .fields
+                    .iter_mut()
+                    .find(|f| {
+                        f.name == name
+                            || f.anns.iter().any(|a| {
+                                a.name == "JsonProperty"
+                                    && java::first_string(&a.args).as_deref() == Some(&name)
+                            })
+                    })
+                    .ok_or_else(|| format!("JsonCreator 参数 {name} 没有对应字段"))?;
+                if !response {
                     field.anns.push(property.clone());
+                }
+                if !response || !field.anns.iter().any(|a| a.name == "JsonFormat") {
+                    field.anns.extend(
+                        annotations
+                            .iter()
+                            .filter(|a| a.name == "JsonFormat")
+                            .cloned(),
+                    );
                 }
             }
         }
@@ -429,7 +449,7 @@ fn schema(
                 ) {
                     return Err(format!("字段 {base}.{} 的 JsonInclude 暂不支持", f.name));
                 }
-            } else if a.name.starts_with("Json") {
+            } else if a.name.starts_with("Json") && a.name != "JsonFormat" {
                 return Err(format!("字段 {base}.{} 的 @{} 暂不支持", f.name, a.name));
             }
         }
@@ -438,6 +458,26 @@ fn schema(
         }
     }
     let doc = spring::schema_for_class(&filtered);
+    let formats: BTreeMap<_, _> = filtered
+        .fields
+        .iter()
+        .filter_map(|f| {
+            f.anns
+                .iter()
+                .rev()
+                .find(|a| a.name == "JsonFormat")
+                .map(|format| {
+                    let name = f
+                        .anns
+                        .iter()
+                        .rev()
+                        .filter(|a| a.name == "JsonProperty")
+                        .find_map(java::ann_path)
+                        .unwrap_or_else(|| f.name.clone());
+                    (name, format)
+                })
+        })
+        .collect();
     if doc.fields.is_empty() {
         return Err(format!("类型 {base} 没有可解析的字段"));
     }
@@ -457,6 +497,10 @@ fn schema(
         .map_err(|error| format!("字段 {base}.{}：{error}", f.name))?;
         if !f.desc.is_empty() {
             field["description"] = json!(f.desc);
+        }
+        if let Some(format) = formats.get(&f.name) {
+            apply_json_format(&mut field, &f.java_type, format)
+                .map_err(|error| format!("字段 {base}.{}：{error}", f.name))?;
         }
         let creator_required = !response
             && filtered.fields.iter().any(|raw| {
@@ -485,6 +529,91 @@ fn schema(
         result["description"] = json!(doc.desc);
     }
     Ok(result)
+}
+
+fn apply_json_format(field: &mut Value, ty: &str, ann: &Ann) -> Result<(), String> {
+    let mut values = BTreeMap::new();
+    for arg in java::split_args(&ann.args) {
+        let (key, raw) = arg.split_once('=').ok_or("@JsonFormat 属性无法解析")?;
+        let (key, raw) = (key.trim(), raw.trim());
+        match key {
+            "pattern" | "timezone" | "locale" => {
+                if !literal(raw) {
+                    return Err(format!("@JsonFormat 的 {key} 不是可解析的字面量"));
+                }
+                let value = &raw[1..raw.len() - 1];
+                if !value.is_empty() && (key == "pattern" || value != "##default") {
+                    values.insert(key.to_owned(), value.to_owned());
+                }
+            }
+            "shape" => {
+                let shape = raw.rsplit('.').next().unwrap_or(raw);
+                if !matches!(
+                    shape,
+                    "ANY" | "STRING" | "NUMBER" | "NUMBER_INT" | "NUMBER_FLOAT"
+                ) {
+                    return Err(format!("@JsonFormat 的 shape {raw} 暂不支持"));
+                }
+                values.insert(key.to_owned(), shape.into());
+            }
+            "lenient" if matches!(raw.rsplit('.').next(), Some("TRUE" | "FALSE" | "DEFAULT")) => {}
+            _ => return Err(format!("@JsonFormat 的 {key} 暂不支持")),
+        }
+    }
+    let shape = values.get("shape").map(String::as_str).unwrap_or("ANY");
+    let temporal = matches!(
+        field["format"].as_str(),
+        Some("date" | "date-time" | "time")
+    );
+    let legacy_date = ty.rsplit('.').next() == Some("Date");
+    let numeric = matches!(shape, "NUMBER" | "NUMBER_INT" | "NUMBER_FLOAT");
+    if numeric && !legacy_date {
+        return Err(format!("@JsonFormat 的 shape {shape} 尚不支持类型 {ty}"));
+    }
+    if values
+        .keys()
+        .any(|key| matches!(key.as_str(), "pattern" | "timezone" | "locale"))
+        && !temporal
+    {
+        return Err(format!("@JsonFormat 的日期格式属性尚不支持类型 {ty}"));
+    }
+    let mut notes = Vec::new();
+    if numeric {
+        // Date 的数值形状优先于 pattern，Jackson 输出毫秒整数。
+        field["type"] = json!("integer");
+        field.as_object_mut().unwrap().remove("format");
+        notes.push("时间戳：毫秒".to_string());
+    } else {
+        if shape == "STRING" {
+            if !matches!(
+                field["type"].as_str(),
+                Some("string" | "integer" | "number" | "boolean")
+            ) {
+                return Err(format!("@JsonFormat 的 shape STRING 尚不支持类型 {ty}"));
+            }
+            field["type"] = json!("string");
+        }
+        if let Some(pattern) = values.get("pattern") {
+            field["type"] = json!("string");
+            // Java 日期模板不是 JSON Schema 正则，也不一定符合 ISO date-time。
+            field.as_object_mut().unwrap().remove("format");
+            notes.push(format!("日期格式：{pattern}"));
+        }
+        for (key, label) in [("timezone", "时区"), ("locale", "区域")] {
+            if let Some(value) = values.get(key) {
+                notes.push(format!("{label}：{value}"));
+            }
+        }
+    }
+    if !notes.is_empty() {
+        let desc = field["description"].as_str().unwrap_or("");
+        field["description"] = json!(if desc.is_empty() {
+            notes.join("；")
+        } else {
+            format!("{desc}\n{}", notes.join("；"))
+        });
+    }
+    Ok(())
 }
 
 fn literal(raw: &str) -> bool {
