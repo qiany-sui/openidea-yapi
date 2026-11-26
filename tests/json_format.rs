@@ -202,6 +202,44 @@ fn json_format_defaults_do_not_discard_existing_schema() {
 }
 
 #[test]
+fn issue_7_member_formats_do_not_become_annotations_on_later_types() {
+    for dto in [
+        r#"class Stat {
+            @JsonFormat(pattern="yyyy-MM-dd") LocalDate statDate;
+            Detail detail;
+            static class Detail { String name; }
+        }"#,
+        r#"class Stat {
+            @JsonFormat(pattern="yyyy-MM-dd") LocalDate statDate;
+            Detail detail;
+            record Detail(String name) {}
+        }"#,
+        r#"class Earlier { @JsonFormat(pattern="yyyy-MM-dd") LocalDate date; }
+        class Stat { String name; }"#,
+        r#"class Stat {
+            Detail detail;
+            @JsonFormat(pattern="yyyy-MM-dd") public LocalDate getStatDate() { return null; }
+            static class Detail { String name; }
+        }"#,
+    ] {
+        let (_, response) = schemas(dto).unwrap_or_else(|error| panic!("{dto}: {error}"));
+        if dto.contains("Detail") {
+            assert_eq!(
+                response["properties"]["detail"]["properties"]["name"]["type"],
+                "string"
+            );
+            let date = &response["properties"]["statDate"];
+            assert_eq!(date["type"], "string");
+            assert!(date.get("format").is_none());
+            assert!(date["description"].as_str().unwrap().contains("yyyy-MM-dd"));
+        } else {
+            assert_eq!(response["properties"]["name"]["type"], "string");
+            assert_eq!(response["properties"].as_object().unwrap().len(), 1);
+        }
+    }
+}
+
+#[test]
 fn json_format_qualified_annotations_and_explicit_record_accessor_are_read() {
     for dto in [
         r#"class Stat { @com.fasterxml.jackson.annotation.JsonFormat(pattern="yyyy/MM/dd") LocalDate statDate; }"#,

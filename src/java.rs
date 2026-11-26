@@ -858,9 +858,21 @@ pub fn match_forward(s: &[char], at: usize, open: char, close: char) -> Option<u
     None
 }
 
-/// Annotations immediately preceding `pos` (scanning the whole prefix).
+/// Annotations on the declaration immediately preceding `pos`.
 pub fn collect_annotations(s: &[char], code: &[char], pos: usize) -> Vec<Ann> {
-    collect_annotations_range(s, code, 0, pos)
+    let mut start = pos;
+    let mut paren = 0;
+    while start > 0 {
+        match s[start - 1] {
+            ')' => paren += 1,
+            '(' => paren -= 1,
+            // 注解参数可含数组的大括号；只有括号外的分隔符才是上一条声明的边界。
+            ';' | '{' | '}' if paren == 0 => break,
+            _ => {}
+        }
+        start -= 1;
+    }
+    collect_annotations_range(s, code, start, pos)
 }
 
 /// All `@Name(...)`/`@Name` annotations contained in [a, b).
