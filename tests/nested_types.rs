@@ -164,3 +164,47 @@ fn record_parameter_names_are_not_nested_record_declarations() {
         assert_eq!(docs[0].response_schema["type"], "string");
     }
 }
+
+#[test]
+fn top_level_controllers_keep_their_own_mapping_arrays() {
+    let input = r#"@RestController @RequestMapping(path={"/first", "/first-alt"}) class First {
+        @GetMapping("/value") public String get() { return ""; }
+    }
+    @RestController @RequestMapping(path={"/second", "/second-alt"}) class Second {
+        @GetMapping("/value") public String get() { return ""; }
+    }"#;
+    let docs = analyze(
+        &[("Controllers.java".into(), input.into())],
+        &["Controllers.java".into()],
+    )
+    .unwrap();
+    let paths: Vec<_> = docs.iter().map(|api| api.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "/first/value",
+            "/first-alt/value",
+            "/second/value",
+            "/second-alt/value"
+        ]
+    );
+}
+
+#[test]
+fn nested_types_retain_jackson_annotations_on_their_own_header() {
+    let input = r#"@RestController class C {
+        @GetMapping("/detail") public Outer.Detail get() { return null; }
+    }
+    class Outer {
+        @JsonProperty("date") LocalDate date;
+        @JsonFormat(shape=JsonFormat.Shape.ARRAY)
+        static class Detail { String name; }
+    }"#;
+    let error = analyze(&[("C.java".into(), input.into())], &["C.java".into()]).unwrap_err();
+    assert!(error.contains("响应体"), "{error}");
+    assert!(
+        error.contains("类型 Outer.Detail 使用暂不支持的 @JsonFormat"),
+        "{error}"
+    );
+    assert!(!error.contains("JsonProperty"), "{error}");
+}
